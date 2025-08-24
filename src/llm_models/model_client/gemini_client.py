@@ -37,6 +37,7 @@ from ..exceptions import (
     NetworkConnectionError,
     RespNotOkException,
     ReqAbortException,
+    EmptyResponseException,
 )
 from ..payload_content.message import Message, RoleType
 from ..payload_content.resp_format import RespFormat, RespFormatType
@@ -224,6 +225,9 @@ def _build_stream_api_resp(
 
             resp.tool_calls.append(ToolCall(call_id, function_name, arguments))
 
+    if not resp.content and not resp.tool_calls:
+        raise EmptyResponseException()
+
     return resp
 
 
@@ -285,7 +289,7 @@ def _default_normal_response_parser(
     api_response = APIResponse()
 
     if not hasattr(resp, "candidates") or not resp.candidates:
-        raise RespParseException(resp, "响应解析失败，缺失candidates字段")
+        raise EmptyResponseException("响应解析失败，缺失candidates字段或candidates列表为空")
     try:
         if resp.candidates[0].content and resp.candidates[0].content.parts:
             for part in resp.candidates[0].content.parts:
@@ -323,6 +327,9 @@ def _default_normal_response_parser(
         _usage_record = None
 
     api_response.raw_data = resp
+
+    if not api_response.content and not api_response.tool_calls:
+        raise EmptyResponseException()
 
     return api_response, _usage_record
 
