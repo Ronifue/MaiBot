@@ -66,6 +66,9 @@ class ModelInfo(ConfigBase):
     extra_params: dict = field(default_factory=dict)
     """额外参数（用于API调用时的额外配置）"""
 
+    is_gemini_compatible_model: bool = False
+    """是否为Gemini兼容模型（用于通过OpenAI接口访问的Gemini API）"""
+
     def __post_init__(self):
         if not self.model_identifier:
             raise ValueError("模型标识符不能为空，请在配置中设置有效的模型标识符。")

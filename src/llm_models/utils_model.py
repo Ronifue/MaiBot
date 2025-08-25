@@ -12,6 +12,7 @@ from src.config.api_ada_configs import APIProvider, ModelInfo, TaskConfig
 from .payload_content.message import MessageBuilder, Message
 from .payload_content.resp_format import RespFormat
 from .payload_content.tool_option import ToolOption, ToolCall, ToolOptionBuilder, ToolParamType
+from .payload_content.gemini_settings import GEMINI_SAFETY_SETTINGS_FOR_OPENAI
 from .model_client.base_client import BaseClient, APIResponse, client_registry
 from .utils import compress_messages, llm_usage_recorder
 from .exceptions import (
@@ -281,6 +282,15 @@ class LLMRequest:
         """
         retry_remain = api_provider.max_retry
         compressed_messages: Optional[List[Message]] = None
+
+        # 合并 extra_params
+        final_extra_params = model_info.extra_params.copy() if model_info.extra_params else {}
+        if api_provider.client_type == "openai" and model_info.is_gemini_compatible_model:
+            logger.debug(f"检测到 Gemini 的 OpenAI 兼容模型，注入特定的 extra_body 参数")
+            gemini_specific_params = {"google": {"safety_settings": GEMINI_SAFETY_SETTINGS_FOR_OPENAI}}
+            # 深层合并
+            final_extra_params.setdefault("google", {}).update(gemini_specific_params["google"])
+
         while retry_remain > 0:
             try:
                 if request_type == RequestType.RESPONSE:
@@ -294,21 +304,21 @@ class LLMRequest:
                         response_format=response_format,
                         stream_response_handler=stream_response_handler,
                         async_response_parser=async_response_parser,
-                        extra_params=model_info.extra_params,
+                        extra_params=final_extra_params,
                     )
                 elif request_type == RequestType.EMBEDDING:
                     assert embedding_input, "embedding_input cannot be empty for embedding requests"
                     return await client.get_embedding(
                         model_info=model_info,
                         embedding_input=embedding_input,
-                        extra_params=model_info.extra_params,
+                        extra_params=final_extra_params,
                     )
                 elif request_type == RequestType.AUDIO:
                     assert audio_base64 is not None, "audio_base64 cannot be None for audio requests"
                     return await client.get_audio_transcriptions(
                         model_info=model_info,
                         audio_base64=audio_base64,
-                        extra_params=model_info.extra_params,
+                        extra_params=final_extra_params,
                     )
             except Exception as e:
                 logger.debug(f"请求失败: {str(e)}")

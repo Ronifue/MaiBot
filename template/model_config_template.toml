@@ -61,6 +61,7 @@ name = "qwen3-8b"
 api_provider = "SiliconFlow"
 price_in = 0
 price_out = 0
+#is_gemini_compatible_model = true  # 若此模型为Gemini的OpenAI兼容模型(且client_type为"openai")，请取消该注释
 [models.extra_params] # 可选的额外参数配置
 enable_thinking = false # 不启用思考
 

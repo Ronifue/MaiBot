@@ -42,6 +42,7 @@ from ..exceptions import (
 from ..payload_content.message import Message, RoleType
 from ..payload_content.resp_format import RespFormat, RespFormatType
 from ..payload_content.tool_option import ToolOption, ToolParam, ToolCall
+from ..payload_content.gemini_settings import GEMINI_SAFETY_SETTINGS
 
 logger = get_logger("Gemini客户端")
 
@@ -55,14 +56,6 @@ THINKING_BUDGET_LIMITS = {
 # 思维预算特殊值
 THINKING_BUDGET_AUTO = -1  # 自动调整思考预算，由模型决定
 THINKING_BUDGET_DISABLED = 0  # 禁用思考预算（如果模型允许禁用）
-
-gemini_safe_settings = [
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.BLOCK_NONE),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold=HarmBlockThreshold.BLOCK_NONE),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.BLOCK_NONE),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold=HarmBlockThreshold.BLOCK_NONE),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold=HarmBlockThreshold.BLOCK_NONE),
-]
 
 
 def _convert_messages(
@@ -444,7 +437,7 @@ class GeminiClient(BaseClient):
                 include_thoughts=True,
                 thinking_budget=tb,
             ),
-            "safety_settings": gemini_safe_settings,  # 防止空回复问题
+            "safety_settings": GEMINI_SAFETY_SETTINGS,  # 防止空回复问题
         }
         if tools:
             generation_config_dict["tools"] = Tool(function_declarations=tools)
@@ -575,7 +568,7 @@ class GeminiClient(BaseClient):
                     extra_params["thinking_budget"] if extra_params and "thinking_budget" in extra_params else 1024
                 ),
             ),
-            "safety_settings": gemini_safe_settings,
+            "safety_settings": GEMINI_SAFETY_SETTINGS,
         }
         generate_content_config = GenerateContentConfig(**generation_config_dict)
         prompt = "Generate a transcript of the speech. The language of the transcript should **match the language of the speech**."
