@@ -285,8 +285,8 @@ class LLMRequest:
 
         # 合并 extra_params
         final_extra_params = model_info.extra_params.copy() if model_info.extra_params else {}
-        if api_provider.client_type == "openai" and api_provider.is_gemini_compatible_endpoint:
-            logger.debug(f"检测到 Gemini 的 OpenAI 兼容终结点，注入特定的 extra_body 参数")
+        if api_provider.client_type == "openai" and model_info.is_gemini_compatible_model:
+            logger.debug(f"检测到 Gemini 的 OpenAI 兼容模型，注入特定的 extra_body 参数")
             gemini_specific_params = {"google": {"safety_settings": GEMINI_SAFETY_SETTINGS_FOR_OPENAI}}
             # 深层合并
             final_extra_params.setdefault("google", {}).update(gemini_specific_params["google"])

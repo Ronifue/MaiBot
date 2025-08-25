@@ -8,7 +8,6 @@ name = "DeepSeek"                       # API服务商名称（可随意命名�
 base_url = "https://api.deepseek.com/v1" # API服务商的BaseURL
 api_key = "your-api-key-here"           # API密钥（请替换为实际的API密钥）
 client_type = "openai"                  # 请求客户端（可选，默认值为"openai"，使用gimini等Google系模型时请配置为"gemini"）
-#is_gemini_compatible_endpoint = true    # 若为Gemini的OpenAI兼容终结点(且client_type为"openai")，请取消该注释。此选项可以自动注入Gemini特有的安全设置，防止出现空响应
 max_retry = 2                           # 最大重试次数（单个模型API调用失败，最多重试的次数）
 timeout = 30                            # API请求超时时间（单位：秒）
 retry_interval = 10                     # 重试间隔时间（单位：秒）
@@ -62,6 +61,7 @@ name = "qwen3-8b"
 api_provider = "SiliconFlow"
 price_in = 0
 price_out = 0
+#is_gemini_compatible_model = true  # 若此模型为Gemini的OpenAI兼容模型(且client_type为"openai")，请取消该注释
 [models.extra_params] # 可选的额外参数配置
 enable_thinking = false # 不启用思考
 
