@@ -281,6 +281,24 @@ class LLMRequest:
         """
         retry_remain = api_provider.max_retry
         compressed_messages: Optional[List[Message]] = None
+
+        # 合并 extra_params
+        final_extra_params = model_info.extra_params.copy() if model_info.extra_params else {}
+        if api_provider.is_gemini_compatible_endpoint:
+            logger.debug(f"检测到 Gemini 兼容终结点，注入特定的 extra_body 参数")
+            gemini_specific_params = {
+                "google": {
+                    "safety_settings": [
+                        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                    ]
+                }
+            }
+            # 深层合并
+            final_extra_params.setdefault("google", {}).update(gemini_specific_params["google"])
+
         while retry_remain > 0:
             try:
                 if request_type == RequestType.RESPONSE:
@@ -294,21 +312,21 @@ class LLMRequest:
                         response_format=response_format,
                         stream_response_handler=stream_response_handler,
                         async_response_parser=async_response_parser,
-                        extra_params=model_info.extra_params,
+                        extra_params=final_extra_params,
                     )
                 elif request_type == RequestType.EMBEDDING:
                     assert embedding_input, "embedding_input cannot be empty for embedding requests"
                     return await client.get_embedding(
                         model_info=model_info,
                         embedding_input=embedding_input,
-                        extra_params=model_info.extra_params,
+                        extra_params=final_extra_params,
                     )
                 elif request_type == RequestType.AUDIO:
                     assert audio_base64 is not None, "audio_base64 cannot be None for audio requests"
                     return await client.get_audio_transcriptions(
                         model_info=model_info,
                         audio_base64=audio_base64,
-                        extra_params=model_info.extra_params,
+                        extra_params=final_extra_params,
                     )
             except Exception as e:
                 logger.debug(f"请求失败: {str(e)}")

@@ -28,6 +28,9 @@ class APIProvider(ConfigBase):
     retry_interval: int = 10
     """重试间隔（如果API调用失败，重试的间隔时间，单位：秒）"""
 
+    is_gemini_compatible_endpoint: bool = False
+    """是否为Gemini兼容终结点（用于区分Gemini官方API和通过OpenAI接口访问的Gemini API）"""
+
     def get_api_key(self) -> str:
         return self.api_key
 
