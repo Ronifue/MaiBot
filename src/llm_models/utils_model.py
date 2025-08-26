@@ -247,18 +247,20 @@ class LLMRequest:
         max_tokens: Optional[int],
         embedding_input: str | None,
         audio_base64: str | None,
+        compressed_messages: Optional[List[Message]] = None,
     ) -> APIResponse:
         """
         在单个模型上执行请求，包含针对临时错误的重试逻辑。
         如果成功，返回APIResponse。如果失败（重试耗尽或硬错误），则抛出ModelAttemptFailed异常。
         """
         retry_remain = api_provider.max_retry
+
         while retry_remain > 0:
             try:
                 if request_type == RequestType.RESPONSE:
                     return await client.get_response(
                         model_info=model_info,
-                        message_list=message_list,
+                        message_list=(compressed_messages or message_list),
                         tool_options=tool_options,
                         max_tokens=self.model_for_task.max_tokens if max_tokens is None else max_tokens,
                         temperature=self.model_for_task.temperature if temperature is None else temperature,
@@ -284,14 +286,23 @@ class LLMRequest:
             except (EmptyResponseException, NetworkConnectionError) as e:
                 retry_remain -= 1
                 if retry_remain <= 0:
-                    logger.error(f"模型 '{model_info.name}' 在用尽重试次数后仍然失败。")
+                    logger.error(f"模型 '{model_info.name}' 在用尽对临时错误的重试次数后仍然失败。")
                     raise ModelAttemptFailed(f"模型 '{model_info.name}' 重试耗尽", original_exception=e) from e
 
                 logger.warning(f"模型 '{model_info.name}' 遇到可重试错误: {str(e)}。剩余重试次数: {retry_remain}")
                 await asyncio.sleep(api_provider.retry_interval)
 
+            except RespNotOkException as e:
+                if e.status_code == 413 and message_list and not compressed_messages:
+                    logger.warning(f"模型 '{model_info.name}' 返回413请求体过大，尝试压缩后重试...")
+                    compressed_messages = compress_messages(message_list)
+                    continue
+
+                logger.warning(f"模型 '{model_info.name}' 遇到不可重试的HTTP错误: {str(e)}")
+                raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
+
             except Exception as e:
-                logger.warning(f"模型 '{model_info.name}' 遇到不可重试的硬错误: {str(e)}")
+                logger.warning(f"模型 '{model_info.name}' 遇到未知的不可重试错误: {str(e)}")
                 raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
 
         raise ModelAttemptFailed(f"模型 '{model_info.name}' 未被尝试，因为重试次数已配置为0或更少。")
@@ -315,12 +326,14 @@ class LLMRequest:
         failed_models_this_request = set()
         max_attempts = len(self.model_for_task.model_list)
         last_exception: Optional[Exception] = None
+        compressed_messages: Optional[List[Message]] = None
 
         for attempt in range(max_attempts):
             model_info, api_provider, client = self._select_model(exclude_models=failed_models_this_request)
 
-            # Defer message creation until we have a client
-            message_list = message_factory(client) if message_factory else []
+            message_list = []
+            if message_factory:
+                message_list = message_factory(client)
 
             try:
                 response = await self._attempt_request_on_model(
@@ -334,6 +347,7 @@ class LLMRequest:
                     max_tokens=max_tokens,
                     embedding_input=embedding_input,
                     audio_base64=audio_base64,
+                    compressed_messages=compressed_messages,
                 )
                 return response, model_info
 
