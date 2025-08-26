@@ -16,9 +16,7 @@ from .model_client.base_client import BaseClient, APIResponse, client_registry
 from .utils import compress_messages, llm_usage_recorder
 from .exceptions import (
     NetworkConnectionError,
-    ReqAbortException,
     RespNotOkException,
-    RespParseException,
     EmptyResponseException,
     ModelAttemptFailed,
 )
@@ -293,11 +291,25 @@ class LLMRequest:
                 await asyncio.sleep(api_provider.retry_interval)
 
             except RespNotOkException as e:
+                # 可重试的HTTP错误
+                if e.status_code == 429 or e.status_code >= 500:
+                    retry_remain -= 1
+                    if retry_remain <= 0:
+                        logger.error(f"模型 '{model_info.name}' 在遇到 {e.status_code} 错误并用尽重试次数后仍然失败。")
+                        raise ModelAttemptFailed(f"模型 '{model_info.name}' 重试耗尽", original_exception=e) from e
+
+                    logger.warning(f"模型 '{model_info.name}' 遇到可重试的HTTP错误: {str(e)}。剩余重试次数: {retry_remain}")
+                    await asyncio.sleep(api_provider.retry_interval)
+                    continue
+
+                # 特殊处理413，尝试压缩
                 if e.status_code == 413 and message_list and not compressed_messages:
                     logger.warning(f"模型 '{model_info.name}' 返回413请求体过大，尝试压缩后重试...")
+                    # 压缩消息本身不消耗重试次数
                     compressed_messages = compress_messages(message_list)
                     continue
 
+                # 不可重试的HTTP错误
                 logger.warning(f"模型 '{model_info.name}' 遇到不可重试的HTTP错误: {str(e)}")
                 raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
 
@@ -328,7 +340,7 @@ class LLMRequest:
         last_exception: Optional[Exception] = None
         compressed_messages: Optional[List[Message]] = None
 
-        for attempt in range(max_attempts):
+        for _attempt in range(max_attempts):
             model_info, api_provider, client = self._select_model(exclude_models=failed_models_this_request)
 
             message_list = []
@@ -359,8 +371,8 @@ class LLMRequest:
                 failed_models_this_request.add(model_info.name)
 
                 if isinstance(last_exception, RespNotOkException) and last_exception.status_code == 400:
-                    logger.error(f"收到不可恢复的客户端错误 (400)，中止所有尝试。")
-                    raise last_exception
+                    logger.error("收到不可恢复的客户端错误 (400)，中止所有尝试。")
+                    raise last_exception from e
 
             finally:
                 total_tokens, penalty, usage_penalty = self.model_usage[model_info.name]
