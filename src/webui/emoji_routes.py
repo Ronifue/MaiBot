@@ -477,7 +477,7 @@ async def get_emoji_thumbnail(
     authorization: Optional[str] = Header(None),
 ):
     """
-    获取表情包缩略图
+    获取表情包缩略图（优先返回优化后的 WebP 代理图片）
 
     Args:
         emoji_id: 表情包ID
@@ -485,7 +485,7 @@ async def get_emoji_thumbnail(
         authorization: Authorization header
 
     Returns:
-        表情包图片文件
+        表情包图片文件（优先 WebP 代理图片，否则原图）
     """
     try:
         # 优先使用 query parameter 中的 token（用于 img 标签）
@@ -506,19 +506,24 @@ async def get_emoji_thumbnail(
         if not os.path.exists(emoji.full_path):
             raise HTTPException(status_code=404, detail="表情包文件不存在")
 
-        # 根据格式设置 MIME 类型
-        mime_types = {
-            "png": "image/png",
-            "jpg": "image/jpeg",
-            "jpeg": "image/jpeg",
-            "gif": "image/gif",
-            "webp": "image/webp",
-            "bmp": "image/bmp",
-        }
+        # 使用代理图片管理器获取优化后的图片路径
+        from src.webui.image_proxy import get_proxy_manager
 
-        media_type = mime_types.get(emoji.format.lower(), "application/octet-stream")
+        proxy_manager = get_proxy_manager()
+        file_path, media_type = await proxy_manager.get_proxy_or_original(emoji)
 
-        return FileResponse(path=emoji.full_path, media_type=media_type, filename=f"{emoji.emoji_hash}.{emoji.format}")
+        # 确定文件名（用于下载时的文件名）
+        if media_type == "image/webp":
+            filename = f"{emoji.emoji_hash}.webp"
+        else:
+            filename = f"{emoji.emoji_hash}.{emoji.format}"
+
+        return FileResponse(
+            path=file_path,
+            media_type=media_type,
+            filename=filename,
+            headers={"Cache-Control": "public, max-age=86400"},  # 浏览器缓存 24 小时
+        )
 
     except HTTPException:
         raise
@@ -868,3 +873,138 @@ async def batch_upload_emoji(
     except Exception as e:
         logger.exception(f"批量上传表情包失败: {e}")
         raise HTTPException(status_code=500, detail=f"批量上传失败: {str(e)}") from e
+
+
+# ==================== 图片代理缓存管理 API ====================
+
+
+@router.get("/proxy/stats")
+async def get_proxy_cache_stats(authorization: Optional[str] = Header(None)):
+    """
+    获取图片代理缓存统计信息
+
+    Args:
+        authorization: Authorization header
+
+    Returns:
+        缓存统计信息
+    """
+    try:
+        verify_auth_token(authorization)
+
+        from src.webui.image_proxy import get_proxy_manager
+        from src.webui.image_proxy.proxy_manager import PROXY_DIR
+
+        proxy_manager = get_proxy_manager()
+
+        # 统计缓存文件
+        webp_count = 0
+        skip_count = 0
+        total_cache_size = 0
+
+        if os.path.exists(PROXY_DIR):
+            for filename in os.listdir(PROXY_DIR):
+                file_path = os.path.join(PROXY_DIR, filename)
+                if filename.endswith(".webp"):
+                    webp_count += 1
+                    total_cache_size += os.path.getsize(file_path)
+                elif filename.endswith(".skip"):
+                    skip_count += 1
+
+        # 统计表情包总数
+        total_emojis = Emoji.select().count()
+
+        # 计算缓存覆盖率
+        cached_count = webp_count + skip_count
+        coverage = (cached_count / total_emojis * 100) if total_emojis > 0 else 0
+
+        return {
+            "success": True,
+            "data": {
+                "total_emojis": total_emojis,
+                "webp_cached": webp_count,
+                "skipped_original_better": skip_count,
+                "pending_transcode": total_emojis - cached_count,
+                "cache_coverage_percent": round(coverage, 2),
+                "cache_size_bytes": total_cache_size,
+                "cache_size_mb": round(total_cache_size / 1024 / 1024, 2),
+                "cache_directory": PROXY_DIR,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"获取代理缓存统计失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取代理缓存统计失败: {str(e)}") from e
+
+
+@router.post("/proxy/transcode-all")
+async def trigger_transcode_all(authorization: Optional[str] = Header(None)):
+    """
+    触发批量转码所有未缓存的表情包（异步执行）
+
+    Args:
+        authorization: Authorization header
+
+    Returns:
+        任务启动结果
+    """
+    try:
+        verify_auth_token(authorization)
+
+        from src.webui.image_proxy import get_proxy_manager
+
+        proxy_manager = get_proxy_manager()
+
+        # 获取所有表情包并加入转码队列
+        emojis = Emoji.select()
+        enqueued_count = 0
+
+        for emoji in emojis:
+            if await proxy_manager.enqueue_transcode(emoji):
+                enqueued_count += 1
+
+        return {
+            "success": True,
+            "message": f"已将 {enqueued_count} 个表情包加入转码队列",
+            "enqueued_count": enqueued_count,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"触发批量转码失败: {e}")
+        raise HTTPException(status_code=500, detail=f"触发批量转码失败: {str(e)}") from e
+
+
+@router.post("/proxy/cleanup")
+async def trigger_cache_cleanup(authorization: Optional[str] = Header(None)):
+    """
+    触发缓存清理（删除无效的缓存文件）
+
+    Args:
+        authorization: Authorization header
+
+    Returns:
+        清理结果
+    """
+    try:
+        verify_auth_token(authorization)
+
+        from src.webui.image_proxy import get_proxy_manager
+
+        proxy_manager = get_proxy_manager()
+        cleaned_count = await proxy_manager.cleanup_stale_cache()
+
+        return {
+            "success": True,
+            "message": f"已清理 {cleaned_count} 个无效缓存文件",
+            "cleaned_count": cleaned_count,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"触发缓存清理失败: {e}")
+        raise HTTPException(status_code=500, detail=f"触发缓存清理失败: {str(e)}") from e

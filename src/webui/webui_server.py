@@ -110,6 +110,27 @@ class WebUIServer:
         except Exception as e:
             logger.error(f"❌ 注册 WebUI API 路由失败: {e}", exc_info=True)
 
+    async def _start_image_proxy_workers(self):
+        """启动图片代理后台工作协程"""
+        try:
+            from src.webui.image_proxy import get_proxy_manager
+
+            proxy_manager = get_proxy_manager()
+            await proxy_manager.start_workers()
+            logger.info("✅ 图片代理后台工作协程已启动")
+        except Exception as e:
+            logger.warning(f"⚠️ 图片代理启动失败（不影响主功能）: {e}")
+
+    async def _stop_image_proxy_workers(self):
+        """停止图片代理后台工作协程"""
+        try:
+            from src.webui.image_proxy import get_proxy_manager
+
+            proxy_manager = get_proxy_manager()
+            await proxy_manager.stop_workers()
+        except Exception as e:
+            logger.warning(f"⚠️ 图片代理停止失败: {e}")
+
     async def start(self):
         """启动服务器"""
         config = Config(
@@ -126,6 +147,9 @@ class WebUIServer:
         if self.host == "0.0.0.0":
             logger.info(f"本机访问请使用 http://localhost:{self.port}")
 
+        # 启动图片代理后台工作协程
+        await self._start_image_proxy_workers()
+
         try:
             await self._server.serve()
         except Exception as e:
@@ -134,6 +158,9 @@ class WebUIServer:
 
     async def shutdown(self):
         """关闭服务器"""
+        # 先停止图片代理后台工作协程
+        await self._stop_image_proxy_workers()
+
         if self._server:
             logger.info("正在关闭 WebUI 服务器...")
             self._server.should_exit = True
