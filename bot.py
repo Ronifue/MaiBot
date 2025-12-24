@@ -189,35 +189,43 @@ def _start_parent_monitor():
     if not runner_pid:
         return
 
-    def is_alive_windows(pid):
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        try:
-            exit_code = ctypes.c_ulong()
-            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                return exit_code.value == STILL_ACTIVE
-            return False
-        finally:
-            kernel32.CloseHandle(handle)
-
     def is_alive_unix(pid):
         return os.getppid() == pid
 
-    is_alive = is_alive_windows if platform.system() == "Windows" else is_alive_unix
-
-    def monitor():
-        while is_alive(runner_pid):
-            time.sleep(2)
+    def trigger_exit():
         # Logger 容错：解释器关闭阶段 Logger 可能已被销毁
         try:
             get_logger("main").warning("检测到 Runner 进程已终止，正在触发优雅退出...")
         except Exception:
             print("[ParentMonitor] 检测到 Runner 进程已终止，正在触发优雅退出...")
         signal.raise_signal(signal.SIGINT)  # 触发 KeyboardInterrupt，走正常关闭流程
+
+    def monitor():
+        if platform.system() == "Windows":
+            # Windows: 循环外获取句柄，循环内只检查退出码，减少系统调用
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, runner_pid)
+            if not handle:
+                # 进程已不存在或无权限访问，直接触发退出
+                return trigger_exit()
+            try:
+                exit_code = ctypes.c_ulong()
+                while True:
+                    if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                        break  # API 调用失败，假定进程已退出
+                    if exit_code.value != STILL_ACTIVE:
+                        break  # 进程已退出
+                    time.sleep(2)
+            finally:
+                kernel32.CloseHandle(handle)
+        else:
+            # Unix: 检测 ppid 是否变化
+            while is_alive_unix(runner_pid):
+                time.sleep(2)
+
+        trigger_exit()
 
     threading.Thread(target=monitor, daemon=True, name="ParentMonitor").start()
 
