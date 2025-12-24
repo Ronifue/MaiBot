@@ -56,6 +56,7 @@ def run_runner_process():
     # 设置环境变量，标记子进程为 Worker 进程
     env = os.environ.copy()
     env["MAIBOT_WORKER_PROCESS"] = "1"
+    env["MAIBOT_RUNNER_PID"] = str(os.getpid())  # 传递 Runner PID 供 Worker 监控
 
     while True:
         logger.info(f"正在启动 {script_file}...")
@@ -173,6 +174,52 @@ def easter_egg():
     for i, char in enumerate(text):
         rainbow_text += rainbow_colors[i % len(rainbow_colors)] + char
     print(rainbow_text)
+
+
+def _start_parent_monitor():
+    """启动父进程存活监控守护线程，检测到 Runner 终止后触发优雅退出"""
+    import ctypes
+    import signal
+    import threading
+
+    try:
+        runner_pid = int(os.environ.get("MAIBOT_RUNNER_PID", "0"))
+    except (ValueError, TypeError):
+        return
+    if not runner_pid:
+        return
+
+    def is_alive_windows(pid):
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+
+    def is_alive_unix(pid):
+        return os.getppid() == pid
+
+    is_alive = is_alive_windows if platform.system() == "Windows" else is_alive_unix
+
+    def monitor():
+        while is_alive(runner_pid):
+            time.sleep(2)
+        # Logger 容错：解释器关闭阶段 Logger 可能已被销毁
+        try:
+            get_logger("main").warning("检测到 Runner 进程已终止，正在触发优雅退出...")
+        except Exception:
+            print("[ParentMonitor] 检测到 Runner 进程已终止，正在触发优雅退出...")
+        signal.raise_signal(signal.SIGINT)  # 触发 KeyboardInterrupt，走正常关闭流程
+
+    threading.Thread(target=monitor, daemon=True, name="ParentMonitor").start()
 
 
 async def graceful_shutdown():  # sourcery skip: use-named-expression
@@ -322,6 +369,9 @@ def raw_main():
 if __name__ == "__main__":
     exit_code = 0  # 用于记录程序最终的退出状态
     try:
+        # 启动父进程存活监控（Runner 异常退出时自动触发优雅关闭）
+        _start_parent_monitor()
+
         # 获取MainSystem实例
         main_system = raw_main()
 
