@@ -18,6 +18,7 @@ from src.emoji_system.emoji_manager import emoji_manager
 from src.manager.async_task_manager import async_task_manager
 from src.plugin_runtime.integration import get_plugin_runtime_manager
 from src.prompt.prompt_manager import prompt_manager
+from src.services.memory_diagnostics_service import MemoryDiagnosticsTask, is_memory_diagnostics_enabled
 from src.services.memory_flow_service import memory_automation_service
 
 # from src.api.main import start_api_server
@@ -113,6 +114,9 @@ class MainSystem:
 
         logger.info(t("startup.chat_manager_initialized"))
         await memory_automation_service.start()
+        if is_memory_diagnostics_enabled():
+            await async_task_manager.add_task(MemoryDiagnosticsTask())
+            logger.info("内存诊断任务已启用")
 
         # await asyncio.sleep(0.5) #防止logger输出飞了
 
