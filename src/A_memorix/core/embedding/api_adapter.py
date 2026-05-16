@@ -129,10 +129,10 @@ class EmbeddingAPIAdapter:
         if not include_dimension or requested_dimension is None:
             return extra_params
 
-        client_type = str(getattr(api_provider, "client_type", "") or "").strip().lower()
+        client_type = api_provider.client_type.strip().lower()
         if client_type in {"gemini", "google"}:
             extra_params["output_dimensionality"] = int(requested_dimension)
-        elif client_type == "openai":
+        elif client_type in {"openai", "openai_responses"}:
             extra_params["dimensions"] = int(requested_dimension)
         return extra_params
 
@@ -385,8 +385,13 @@ class EmbeddingAPIAdapter:
 
             semaphore = asyncio.Semaphore(self.max_concurrent)
 
-            async def encode_with_semaphore(text: str, batch_index: int, absolute_index: int):
-                async with semaphore:
+            async def encode_with_semaphore(
+                text: str,
+                batch_index: int,
+                absolute_index: int,
+                batch_semaphore: asyncio.Semaphore = semaphore,
+            ):
+                async with batch_semaphore:
                     embedding = await self._get_embedding_direct(text, dimensions=dimensions)
                     if embedding is None:
                         raise RuntimeError(f"文本 {absolute_index} 编码失败：embedding 返回为空")

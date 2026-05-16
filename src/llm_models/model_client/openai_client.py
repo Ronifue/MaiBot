@@ -173,12 +173,14 @@ def _build_reasoning_key(api_provider: APIProvider) -> str:
     return PROVIDER_REASONING_KEYS_BY_DOMAIN.get(provider_hostname, "reasoning_content")
 
 
-def _extract_reasoning_content(message_part: Any, reasoning_key: str) -> str | None:
+def _extract_reasoning_content(message_part: Any, reasoning_key: str | None) -> str | None:
     """从 OpenAI 兼容响应对象中读取原生推理内容。
 
     不同兼容服务商对推理字段命名并不完全一致。这里集中处理字段访问，
     避免解析路径里散落 provider 特判；具体字段名由 provider 决定。
     """
+    if not reasoning_key:
+        return None
     native_reasoning = getattr(message_part, reasoning_key, None)
     if isinstance(native_reasoning, str) and native_reasoning:
         return native_reasoning

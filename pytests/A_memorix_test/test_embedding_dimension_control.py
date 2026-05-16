@@ -77,6 +77,23 @@ async def test_encode_uses_canonical_dimension_for_openai_provider(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_encode_uses_canonical_dimension_for_openai_responses_provider(monkeypatch):
+    adapter, fake_client = _build_adapter(
+        monkeypatch,
+        client_type="openai_responses",
+        configured_dimension=1024,
+        effective_dimension=512,
+    )
+
+    embedding = await adapter.encode("银色钟摆")
+
+    request = fake_client.requests[-1]
+    assert request.extra_params["dimensions"] == 512
+    assert "output_dimensionality" not in request.extra_params
+    assert embedding.shape == (512,)
+
+
+@pytest.mark.asyncio
 async def test_encode_explicit_dimension_override_wins(monkeypatch):
     adapter, fake_client = _build_adapter(
         monkeypatch,
